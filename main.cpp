@@ -54,20 +54,26 @@ class SlicedImage {
   const uint16_t sliced_width;
 };
 
-Tensor&& bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_height, uint16_t target_width, bool pad_to_square=false) {
-  bool width_larger = (target_height < target_width) ? true : false;
+Tensor&& bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_size, bool pad_to_square=false) {
   const uint16_t orig_height = (slicedImage.num_row_slices)*(slicedImage.sliced_height);
   const uint16_t orig_width = (slicedImage.num_col_slices)*(slicedImage.sliced_width);
+  bool width_larger = (orig_height < orig_width) ? true : false;
   uint16_t pad_left = 0;
   uint16_t pad_top = 0;
+  uint16_t target_height = 0;
+  uint16_t target_width = 0;
   if(width_larger){
-    assert(("Invalid rescale shapes", orig_width > orig_height));
+    target_width = target_size;
+    target_height = static_cast<uint16_t>(static_cast<float>(orig_height)*
+        ( static_cast<float>(target_size) / static_cast<float>(orig_width) ));
     if(pad_to_square){
       pad_top = (target_width - target_height) >> 1; // Divide by 2
       target_height += 2*pad_top;
     }
   } else {
-    assert(("Invalid rescale shapes", orig_width <= orig_height));
+    target_height = target_size;
+    target_width = static_cast<uint16_t>(static_cast<float>(orig_width)*
+        ( static_cast<float>(target_size) / static_cast<float>(orig_height) ));
     if(pad_to_square) {
       pad_left = (target_height - target_width) >> 1; // Divide by 2
       target_width += 2*pad_left;
