@@ -1,0 +1,3 @@
+[submodule "uTensor"]
+	path = uTensor
+	url = git@github.com:uTensor/uTensor.git
