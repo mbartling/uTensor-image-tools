@@ -1,3 +1,6 @@
 [submodule "uTensor"]
 	path = uTensor
 	url = git@github.com:uTensor/uTensor.git
+[submodule "extern/bitmap"]
+	path = extern/bitmap
+	url = git@github.com:ArashPartow/bitmap.git
