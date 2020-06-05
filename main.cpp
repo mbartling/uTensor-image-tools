@@ -24,9 +24,11 @@ class SlicedImage {
       // TODO
       // Do asserts to make sure there is no remainder from slicing h/w      
       // Do assert to make sure num_channels == 3
+#ifdef CPP_PRINT
       cout << "Num Slices:    " << num_slices << endl;
       cout << "Sliced Height: " << sliced_height << endl;
       cout << "Sliced Width:  " << sliced_width << endl;
+#endif
     }
 
     void set_current_slice(uint8_t slice_row, uint8_t slice_col) { 
@@ -54,7 +56,7 @@ class SlicedImage {
   const uint16_t sliced_width;
 };
 
-Tensor&& bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_size, bool pad_to_square=false) {
+TensorInterface* bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_size, bool pad_to_square=false) {
   const uint16_t orig_height = (slicedImage.num_row_slices)*(slicedImage.sliced_height);
   const uint16_t orig_width = (slicedImage.num_col_slices)*(slicedImage.sliced_width);
   bool width_larger = (orig_height < orig_width) ? true : false;
@@ -68,7 +70,8 @@ Tensor&& bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_size, bo
         ( static_cast<float>(target_size) / static_cast<float>(orig_width) ));
     if(pad_to_square){
       pad_top = (target_width - target_height) >> 1; // Divide by 2
-      target_height += 2*pad_top;
+      // TODO assert target_height no greater than target_size
+      target_height = target_size;
     }
   } else {
     target_height = target_size;
@@ -76,14 +79,14 @@ Tensor&& bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_size, bo
         ( static_cast<float>(target_size) / static_cast<float>(orig_height) ));
     if(pad_to_square) {
       pad_left = (target_height - target_width) >> 1; // Divide by 2
-      target_width += 2*pad_left;
+      target_width = target_size;
     }
   }
   
-  Tensor scaledImg = new RamTensor({1, target_height, target_width, 3}, u8);
+  TensorInterface* scaledImg = new RamTensor({1, target_height, target_width, 3}, u8);
   // TODO consider making these float
-  const uint16_t h_scale = orig_height / target_height;
-  const uint16_t w_scale = orig_width / target_width;
+  const uint16_t h_scale = orig_height / (target_height - 2*pad_top); // Shift back to original scales if padding
+  const uint16_t w_scale = orig_width / (target_width - 2*pad_left);
 
   for(uint16_t out_y = 0; out_y < target_height;  out_y++) {
     for(uint16_t out_x = 0; out_x < target_width;  out_x++) {
@@ -125,11 +128,11 @@ Tensor&& bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_size, bo
           
           out_val = static_cast<uint8_t>(out_f);
         } // else not in padding
-        scaledImg(0, out_y, out_x, c) = out_val;
+        (*scaledImg)(0, out_y, out_x, c) = out_val;
       }
     }
   }
-  return std::move(scaledImg);
+  return scaledImg;
 }
 
 /*
@@ -196,6 +199,20 @@ int main(int argc, char* argv[]) {
   oimage.save_image("output.bmp");
 
   // Bilinear interpolation
+  slicedImage.set_current_slice(0 , 3);
+  Tensor scaledImage =  bilinear_interpolate(slicedImage, 32, true);
+  bitmap_image simage(32, 32);
+  for (int y = 0; y < scaledImage->get_shape()[1]; y++) {
+    for (int x = 0; x < scaledImage->get_shape()[2]; x++) {
+      // uint8_t r,g,b;
+      const uint8_t r = scaledImage(0, y, x, 2);
+      const uint8_t g = scaledImage(0, y, x, 1);
+      const uint8_t b = scaledImage(0, y, x, 0);
+      simage.set_pixel(x, y, r, g, b);
+    }
+  }
+  cout << "Saving image" << endl;
+  simage.save_image("scaled_output.bmp");
 
   return 0;
 }
