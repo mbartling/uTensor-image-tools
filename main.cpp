@@ -18,6 +18,7 @@ using namespace uTensor;
 
 int str2int(const char* str);
 
+const int target_image_resize = 32;
 /*
  * uTensor module instantiation
  */
@@ -83,9 +84,8 @@ int main(int argc, char* argv[]) {
 
   // Bilinear interpolation
   slicedImage.set_current_slice(0, 3);
-  int target_size = 32;
-  Tensor scaledImage = bilinear.interpolate(slicedImage, target_size, true);
-  bitmap_image simage(target_size, target_size);
+  Tensor scaledImage = bilinear.interpolate(slicedImage, target_image_resize, true);
+  bitmap_image simage(target_image_resize, target_image_resize);
   for (int y = 0; y < scaledImage->get_shape()[1]; y++) {
     for (int x = 0; x < scaledImage->get_shape()[2]; x++) {
       // uint8_t r,g,b;
