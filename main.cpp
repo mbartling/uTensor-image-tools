@@ -57,8 +57,8 @@ class SlicedImage {
 };
 
 TensorInterface* bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_size, bool pad_to_square=false) {
-  const uint16_t orig_height = (slicedImage.num_row_slices)*(slicedImage.sliced_height);
-  const uint16_t orig_width = (slicedImage.num_col_slices)*(slicedImage.sliced_width);
+  const uint16_t orig_height = slicedImage.sliced_height;
+  const uint16_t orig_width = slicedImage.sliced_width;
   bool width_larger = (orig_height < orig_width) ? true : false;
   uint16_t pad_left = 0;
   uint16_t pad_top = 0;
@@ -85,8 +85,11 @@ TensorInterface* bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_
   
   TensorInterface* scaledImg = new RamTensor({1, target_height, target_width, 3}, u8);
   // TODO consider making these float
-  const uint16_t h_scale = orig_height / (target_height - 2*pad_top); // Shift back to original scales if padding
-  const uint16_t w_scale = orig_width / (target_width - 2*pad_left);
+  // Shift back to original scales if padding
+  const float h_scale = static_cast<float>(orig_height) / static_cast<float>(target_height - 2*pad_top); 
+  const float w_scale = static_cast<float>(orig_width) / static_cast<float>(target_width - 2*pad_left);
+  const uint16_t target_width_ubound = target_width - 2*pad_left; // ignore right padding
+  const uint16_t target_height_ubound = target_height - 2*pad_top; // ignore bottom padding
 
   for(uint16_t out_y = 0; out_y < target_height;  out_y++) {
     for(uint16_t out_x = 0; out_x < target_width;  out_x++) {
@@ -95,18 +98,18 @@ TensorInterface* bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_
       for(uint16_t c = 0; c < 3; c++) {
         uint8_t out_val = 0;
         // If in padded region
-        if (!((out_x_origin >= 0) && (out_x_origin < target_width) && (out_y_origin >= 0) &&
-            (out_y_origin < target_height))) {
+        if (!((out_x_origin >= 0) && (out_x_origin < target_width_ubound) && (out_y_origin >= 0) &&
+            (out_y_origin < target_height_ubound))) {
           out_val = 0;
         } else { // We are not in padded region
           // TODO consider doing float scaling then back to int post
           // Note these are int on purpose so we can check bounds more easily
-          const int16_t in_y = out_y_origin * h_scale;
-          const int16_t in_x = out_x_origin * w_scale;
+          const int16_t in_y = static_cast<int16_t>(static_cast<float>(out_y_origin) * h_scale);
+          const int16_t in_x = static_cast<int16_t>(static_cast<float>(out_x_origin) * w_scale);
           const int16_t x1 = ( (in_x - 1) > 0 ) ? in_x - 1 : 0; 
           const int16_t y1 = ( (in_y - 1) > 0 ) ? in_y - 1 : 0; 
-          const int16_t x2 = ( (in_x + 1) < target_width  ) ? in_x + 1 : target_width-1; 
-          const int16_t y2 = ( (in_y + 1) < target_height ) ? in_y + 1 : target_height-1; 
+          const int16_t x2 = ( (in_x + 1) < target_width_ubound  ) ? in_x + 1 : target_width_ubound-1; 
+          const int16_t y2 = ( (in_y + 1) < target_height_ubound ) ? in_y + 1 : target_height_ubound-1; 
           
           const uint8_t Q11 = slicedImage(y1, x1, c);
           const uint8_t Q21 = slicedImage(y1, x2, c);
@@ -122,9 +125,11 @@ TensorInterface* bilinear_interpolate(SlicedImage& slicedImage, uint16_t target_
             static_cast<float>(Q22)*static_cast<float>(in_x - x1)/static_cast<float>(x2-x1);
           
           // Interpolate in y dir
-          const float out_f = 
+          float out_f = 
             fxy1*static_cast<float>(y2-in_y)/static_cast<float>(y2-y1) +
             fxy2*static_cast<float>(in_y - y1)/static_cast<float>(y2-y1);
+          out_f = (out_f > 255) ? 255 : out_f;
+          out_f = (out_f < 0) ? 0 : out_f;
           
           out_val = static_cast<uint8_t>(out_f);
         } // else not in padding
@@ -200,8 +205,9 @@ int main(int argc, char* argv[]) {
 
   // Bilinear interpolation
   slicedImage.set_current_slice(0 , 3);
-  Tensor scaledImage =  bilinear_interpolate(slicedImage, 32, true);
-  bitmap_image simage(32, 32);
+  int target_size = 32;
+  Tensor scaledImage =  bilinear_interpolate(slicedImage, target_size, true);
+  bitmap_image simage(target_size, target_size);
   for (int y = 0; y < scaledImage->get_shape()[1]; y++) {
     for (int x = 0; x < scaledImage->get_shape()[2]; x++) {
       // uint8_t r,g,b;
