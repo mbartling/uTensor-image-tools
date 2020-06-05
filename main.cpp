@@ -1,11 +1,16 @@
+/**
+ * Super hacky host side example program showcasing how to slice up an image in a buffer 
+ * and resize the results using uTensor.
+ *
+ */
 #include <iostream>
 #include <stdexcept>
 #include <string>
 
+#include "Interpolation.hpp"
+#include "SlicedImage.hpp"
 #include "bitmap_image.hpp"
 #include "uTensor.h"
-#include "SlicedImage.hpp"
-#include "Interpolation.hpp"
 
 using std::cout;
 using std::endl;
@@ -17,8 +22,8 @@ int str2int(const char* str);
  * uTensor module instantiation
  */
 localCircularArenaAllocator<2048> meta_allocator;
-localCircularArenaAllocator<4000000, uint32_t>
-    ram_allocator;  // 4MB should be plenty
+// 4MB should be plenty
+localCircularArenaAllocator<4000000, uint32_t> ram_allocator;  
 SimpleErrorHandler mErrHandler(10);
 BilinearInterpolator<uint8_t> bilinear;
 
@@ -58,13 +63,12 @@ int main(int argc, char* argv[]) {
   Context::get_default_context()->set_ErrorHandler(&mErrHandler);
 
   // Keep the buffer around as we may want tu use it for something
-  Tensor image_t = new BufferTensor(
-      {1, height, width, 3}, u8, image_buffer);
+  Tensor image_t = new BufferTensor({1, height, width, 3}, u8, image_buffer);
   SlicedImage<uint8_t> slicedImage(image_t, num_row_slices, num_col_slices);
 
   // Output the sliced image
   bitmap_image oimage(slicedImage.sliced_width, slicedImage.sliced_height);
-  slicedImage.set_current_slice(0 , 3);
+  slicedImage.set_current_slice(0, 3);
   for (int y = 0; y < slicedImage.sliced_height; y++) {
     for (int x = 0; x < slicedImage.sliced_width; x++) {
       // uint8_t r,g,b;
@@ -78,9 +82,9 @@ int main(int argc, char* argv[]) {
   oimage.save_image("output.bmp");
 
   // Bilinear interpolation
-  slicedImage.set_current_slice(0 , 3);
+  slicedImage.set_current_slice(0, 3);
   int target_size = 32;
-  Tensor scaledImage =  bilinear.interpolate(slicedImage, target_size, true);
+  Tensor scaledImage = bilinear.interpolate(slicedImage, target_size, true);
   bitmap_image simage(target_size, target_size);
   for (int y = 0; y < scaledImage->get_shape()[1]; y++) {
     for (int x = 0; x < scaledImage->get_shape()[2]; x++) {
