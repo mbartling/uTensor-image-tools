@@ -1,6 +1,8 @@
 #ifndef IMAGE_INTERPOLATION_HPP
 #define IMAGE_INTERPOLATION_HPP
 #include "SlicedImage.hpp"
+#include <cmath>
+#include <cstdio>
 
 // Can be smarter than a regular function
 // TODO cache parameters so we dont have to do extra computation on hot runs
@@ -10,6 +12,11 @@ class BilinearInterpolator {
   uTensor::TensorInterface* interpolate(SlicedImage<T>& slicedImage,
                                         uint16_t target_size,
                                         bool pad_to_square = false);
+  uTensor::TensorInterface* interpolate(SlicedImage<T>& slicedImage,
+                                        uint16_t target_height,
+                                        uint16_t target_width,
+                                        uint16_t pad_top = 0,
+                                        uint16_t pad_left = 0);
 };
 
 template <typename T>
@@ -58,57 +65,48 @@ uTensor::TensorInterface* BilinearInterpolator<T>::interpolate(
 
   for (uint16_t out_y = 0; out_y < target_height; out_y++) {
     for (uint16_t out_x = 0; out_x < target_width; out_x++) {
-      const uint16_t out_y_origin = out_y - pad_top;
-      const uint16_t out_x_origin = out_x - pad_left;
+      const uint16_t oy_s = out_y - pad_top;
+      const uint16_t ox_s = out_x - pad_left;
       for (uint16_t c = 0; c < 3; c++) {
         T out_val = 0;
-        // If in padded region
-        if (!((out_x_origin >= 0) && (out_x_origin < target_width_ubound) &&
-              (out_y_origin >= 0) && (out_y_origin < target_height_ubound))) {
+        if (oy_s < 0 || ox_s < 0 || oy_s >= target_height_ubound || ox_s >= target_width_ubound){
           out_val = 0;
-        } else {  // We are not in padded region
-          // TODO consider doing float scaling then back to int post
-          // Note these are int on purpose so we can check bounds more easily
-          const int16_t in_y =
-              static_cast<int16_t>(static_cast<float>(out_y_origin) * h_scale);
-          const int16_t in_x =
-              static_cast<int16_t>(static_cast<float>(out_x_origin) * w_scale);
-          const int16_t x1 = ((in_x - 1) > 0) ? in_x - 1 : 0;
-          const int16_t y1 = ((in_y - 1) > 0) ? in_y - 1 : 0;
-          const int16_t x2 = ((in_x + 1) < target_width_ubound)
-                                 ? in_x + 1
-                                 : target_width_ubound - 1;
-          const int16_t y2 = ((in_y + 1) < target_height_ubound)
-                                 ? in_y + 1
-                                 : target_height_ubound - 1;
+        } else { // Not in padding 
+          // Map outputs to input space
+          const float y = h_scale * static_cast<float>(oy_s);
+          const float x = w_scale * static_cast<float>(ox_s);
+          //printf("%d %d %f %f\n", out_y, out_x, y, x);
+          const float y1 = std::floor(y - 1);
+          const float x1 = std::floor(x - 1);
+          const float y2 = std::ceil(y + 1);
+          const float x2 = std::ceil(x + 1);
 
-          const T Q11 = slicedImage(y1, x1, c);
-          const T Q21 = slicedImage(y1, x2, c);
-          const T Q12 = slicedImage(y2, x1, c);
-          const T Q22 = slicedImage(y2, x2, c);
+          const int16_t x1i = ( static_cast<int16_t>(x1)  < 0 ) ? orig_width  + static_cast<int16_t>(x1)  : static_cast<int16_t>(x1) % orig_width;
+          const int16_t y1i = ( static_cast<int16_t>(y1)  < 0 ) ? orig_height + static_cast<int16_t>(y1)  : static_cast<int16_t>(y1) % orig_height;
+          const int16_t x2i = ( static_cast<int16_t>(x2)  < 0 ) ? orig_width  + static_cast<int16_t>(x2)  : static_cast<int16_t>(x2) % orig_width;
+          const int16_t y2i = ( static_cast<int16_t>(y2)  < 0 ) ? orig_height + static_cast<int16_t>(y2)  : static_cast<int16_t>(y2) % orig_height;
+          const float fQ11 = static_cast<float>(static_cast<T>(slicedImage(y1i, x1i, c)));
+          const float fQ21 = static_cast<float>(static_cast<T>(slicedImage(y1i, x2i, c)));
+          const float fQ12 = static_cast<float>(static_cast<T>(slicedImage(y2i, x1i, c)));
+          const float fQ22 = static_cast<float>(static_cast<T>(slicedImage(y2i, x2i, c)));
 
-          // Interpolate in x dir
-          const float fxy1 =
-              static_cast<float>(Q11) * static_cast<float>(x2 - in_x) /
-                  static_cast<float>(x2 - x1) +
-              static_cast<float>(Q21) * static_cast<float>(in_x - x1) /
-                  static_cast<float>(x2 - x1);
-          const float fxy2 =
-              static_cast<float>(Q12) * static_cast<float>(x2 - in_x) /
-                  static_cast<float>(x2 - x1) +
-              static_cast<float>(Q22) * static_cast<float>(in_x - x1) /
-                  static_cast<float>(x2 - x1);
+          //interpolate in x dir, handle same val case
+          const float xm = ( fabs(x2 - x1) < 0.00001 )? 1.0 : x2 - x1;
+          const float tx2 = ( fabs(x2 - x) < 0.00001 )? 1.0 : x2 - x;
+          const float tx1 = ( fabs(x - x1) < 0.00001 )? 1.0 : x - x1;
+          const float fxy1 = (tx2 / xm)*fQ11 + (tx1 / xm)*fQ21;
+          const float fxy2 = (tx2 / xm)*fQ12 + (tx1 / xm)*fQ22;
 
-          // Interpolate in y dir
-          float out_f = fxy1 * static_cast<float>(y2 - in_y) /
-                            static_cast<float>(y2 - y1) +
-                        fxy2 * static_cast<float>(in_y - y1) /
-                            static_cast<float>(y2 - y1);
-          out_f = (out_f > 255) ? 255 : out_f;
-          out_f = (out_f < 0) ? 0 : out_f;
+          //interpolate in y dir
+          const float ym = (fabs(y2 - y1) < 0.000001 ) ? 1.0 : y2 - y1;
+          const float ty2 = ( fabs(y2 - y) < 0.00001 )? 1.0 : y2 - y;
+          const float ty1 = ( fabs(y - y1) < 0.00001 )? 1.0 : y - y1;
+          float fxy = (ty2 / ym) * fxy1 + (ty1 / ym) * fxy2;
+          fxy = (fxy > 255) ? 255 : fxy;
+          fxy = (fxy < 0) ? 0 : fxy;
+          out_val = static_cast<T>(fxy);
 
-          out_val = static_cast<T>(out_f);
-        }  // else not in padding
+        }
         (*scaledImg)(0, out_y, out_x, c) = out_val;
       }
     }
@@ -116,4 +114,74 @@ uTensor::TensorInterface* BilinearInterpolator<T>::interpolate(
   return scaledImg;
 }
 
+template <typename T>
+uTensor::TensorInterface* BilinearInterpolator<T>::interpolate(
+    SlicedImage<T>& slicedImage, 
+    uint16_t target_height, 
+    uint16_t target_width,
+    uint16_t pad_top,
+    uint16_t pad_left) {
+  const uint16_t orig_height = slicedImage.sliced_height;
+  const uint16_t orig_width = slicedImage.sliced_width;
+
+  const uint16_t scaled_height = target_height + 2 * pad_top;
+  const uint16_t scaled_width  = target_width  + 2 * pad_left;
+  uTensor::TensorInterface* scaledImg =
+      new uTensor::RamTensor({1, scaled_height, scaled_width, 3}, u8);
+
+  const float h_scale = static_cast<float>(orig_height) / static_cast<float>(target_height);
+  const float w_scale = static_cast<float>(orig_width) / static_cast<float>(target_width);
+  //printf("h scale %f, w scale %f\n", h_scale, w_scale);
+
+  for (uint16_t out_y = 0; out_y < scaled_height; out_y++) {
+    for (uint16_t out_x = 0; out_x < scaled_width; out_x++) {
+      const int16_t oy_s = out_y - pad_top;
+      const int16_t ox_s = out_x - pad_left;
+      for(uint16_t c = 0; c < 3; c++ ){
+      T out_val = 0;
+      if (oy_s < 0 || ox_s < 0 || oy_s >= target_height || ox_s >= target_width){
+        out_val = 0;
+      } else { // Not in padding 
+        // Map outputs to input space
+        const float y = h_scale * static_cast<float>(oy_s);
+        const float x = w_scale * static_cast<float>(ox_s);
+        //printf("%d %d %f %f\n", out_y, out_x, y, x);
+        const float y1 = std::floor(y - 1);
+        const float x1 = std::floor(x - 1);
+        const float y2 = std::ceil(y + 1);
+        const float x2 = std::ceil(x + 1);
+
+        const int16_t x1i = ( static_cast<int16_t>(x1)  < 0 ) ? orig_width  + static_cast<int16_t>(x1)  : static_cast<int16_t>(x1) % orig_width;
+        const int16_t y1i = ( static_cast<int16_t>(y1)  < 0 ) ? orig_height + static_cast<int16_t>(y1)  : static_cast<int16_t>(y1) % orig_height;
+        const int16_t x2i = ( static_cast<int16_t>(x2)  < 0 ) ? orig_width  + static_cast<int16_t>(x2)  : static_cast<int16_t>(x2) % orig_width;
+        const int16_t y2i = ( static_cast<int16_t>(y2)  < 0 ) ? orig_height + static_cast<int16_t>(y2)  : static_cast<int16_t>(y2) % orig_height;
+        const float fQ11 = static_cast<float>(static_cast<T>(slicedImage(y1i, x1i, c)));
+        const float fQ21 = static_cast<float>(static_cast<T>(slicedImage(y1i, x2i, c)));
+        const float fQ12 = static_cast<float>(static_cast<T>(slicedImage(y2i, x1i, c)));
+        const float fQ22 = static_cast<float>(static_cast<T>(slicedImage(y2i, x2i, c)));
+
+        //interpolate in x dir, handle same val case
+        const float xm = ( fabs(x2 - x1) < 0.00001 )? 1.0 : x2 - x1;
+        const float tx2 = ( fabs(x2 - x) < 0.00001 )? 1.0 : x2 - x;
+        const float tx1 = ( fabs(x - x1) < 0.00001 )? 1.0 : x - x1;
+        const float fxy1 = (tx2 / xm)*fQ11 + (tx1 / xm)*fQ21;
+        const float fxy2 = (tx2 / xm)*fQ12 + (tx1 / xm)*fQ22;
+
+        //interpolate in y dir
+        const float ym = (fabs(y2 - y1) < 0.000001 ) ? 1.0 : y2 - y1;
+        const float ty2 = ( fabs(y2 - y) < 0.00001 )? 1.0 : y2 - y;
+        const float ty1 = ( fabs(y - y1) < 0.00001 )? 1.0 : y - y1;
+        float fxy = (ty2 / ym) * fxy1 + (ty1 / ym) * fxy2;
+        fxy = (fxy > 255) ? 255 : fxy;
+        fxy = (fxy < 0) ? 0 : fxy;
+        out_val = static_cast<T>(fxy);
+
+      }
+      (*scaledImg)(0, out_y, out_x, c) = out_val;
+      } // Per channel
+    } // out_x
+  } // out_y
+
+  return scaledImg;
+}
 #endif
